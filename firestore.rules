@@ -1,0 +1,109 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isUser(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isPartyToNegotiation(negotiationData) {
+      return isAuthenticated() && (
+        request.auth.uid == negotiationData.initiatorId || 
+        request.auth.uid == negotiationData.counterpartyId ||
+        request.auth.uid == negotiationData.businessId
+      );
+    }
+
+    // User profile access rules
+    match /users/{userId} {
+      // Users can read their own profile, Admins can read all profiles
+      allow read: if isAuthenticated();
+      // Users can only write their own profile during registration/update, but cannot self-assign admin
+      allow create: if isAuthenticated() && request.auth.uid == userId && request.resource.data.role != 'admin';
+      allow update: if (isUser(userId) && request.resource.data.role == resource.data.role) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Negotiations collection rules
+    match /negotiations/{negotiationId} {
+      // Parties or Admins can read
+      allow read: if isAuthenticated() && (isPartyToNegotiation(resource.data) || isAdmin());
+      
+      // Authenticated users can initiate a negotiation
+      allow create: if isAuthenticated() && (
+        request.resource.data.initiatorId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Parties or Admin can update negotiation status
+      allow update: if isAuthenticated() && (isPartyToNegotiation(resource.data) || isAdmin());
+      allow delete: if isAdmin();
+
+      // Subcollection: Offers & Counteroffers
+      match /offers/{offerId} {
+        allow read: if isAuthenticated() && (
+          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) || 
+          isAdmin()
+        );
+        allow create: if isAuthenticated() && (
+          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) &&
+          request.resource.data.fromUserId == request.auth.uid
+        );
+        allow update, delete: if isAdmin();
+      }
+
+      // Subcollection: Realtime Chat Messages
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (
+          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) || 
+          isAdmin()
+        );
+        allow create: if isAuthenticated() && (
+          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) &&
+          (request.resource.data.senderId == request.auth.uid || request.resource.data.senderId == 'system')
+        );
+        allow update, delete: if isAdmin();
+      }
+
+      // Subcollection: Attached Documents
+      match /documents/{documentId} {
+        allow read: if isAuthenticated() && (
+          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) || 
+          isAdmin()
+        );
+        allow create: if isAuthenticated() && (
+          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) &&
+          request.resource.data.uploadedBy == request.auth.uid
+        );
+        allow delete: if isAdmin() || (
+          isAuthenticated() && resource.data.uploadedBy == request.auth.uid
+        );
+      }
+    }
+
+    // Agreements collection
+    match /agreements/{negotiationId} {
+      allow read: if isAuthenticated() && (
+        exists(/databases/$(database)/documents/negotiations/$(negotiationId)) &&
+        isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) ||
+        isAdmin()
+      );
+      allow create, update: if isAuthenticated() && (
+        exists(/databases/$(database)/documents/negotiations/$(negotiationId)) &&
+        isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) ||
+        isAdmin()
+      );
+    }
+  }
+}
