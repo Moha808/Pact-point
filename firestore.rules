@@ -22,7 +22,7 @@ service cloud.firestore {
         request.auth.uid == negotiationData.initiatorId || 
         request.auth.uid == negotiationData.counterpartyId ||
         request.auth.uid == negotiationData.businessId ||
-        (negotiationData.participants != null && request.auth.uid in negotiationData.participants)
+        ('participants' in negotiationData && request.auth.uid in negotiationData.participants)
       );
     }
 
@@ -68,7 +68,11 @@ service cloud.firestore {
           isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) &&
           request.resource.data.fromUserId == request.auth.uid
         );
-        allow update, delete: if isAdmin();
+        allow update: if isAuthenticated() && (
+          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) || 
+          isAdmin()
+        );
+        allow delete: if isAdmin();
       }
 
       // Subcollection: Realtime Chat Messages

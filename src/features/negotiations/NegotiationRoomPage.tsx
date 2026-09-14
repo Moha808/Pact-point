@@ -221,14 +221,25 @@ export const NegotiationRoomPage: React.FC = () => {
 
   const handleAcceptLatest = async () => {
     if (!latestOffer) return;
-    await acceptOffer(negotiation.id, latestOffer.id);
-    setAcceptConfirmOfferId(null);
-    navigate(`/agreement/${negotiation.id}`);
+    try {
+      await acceptOffer(negotiation.id, latestOffer.id);
+      setAcceptConfirmOfferId(null);
+      navigate(`/agreement/${negotiation.id}`);
+    } catch (err) {
+      console.error('Failed to accept offer:', err);
+      alert('There was a problem accepting this offer. Please ensure you have the correct permissions.');
+      setAcceptConfirmOfferId(null);
+    }
   };
 
   const handleRejectLatest = async () => {
     if (!latestOffer) return;
-    await rejectOffer(negotiation.id, latestOffer.id);
+    try {
+      await rejectOffer(negotiation.id, latestOffer.id);
+    } catch (err) {
+      console.error('Failed to reject offer:', err);
+      alert('There was a problem rejecting this offer.');
+    }
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {

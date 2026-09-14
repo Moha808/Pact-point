@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNegotiation } from '../../context/NegotiationContext';
 import { RoleBadge } from '../common/Badge';
 import { ThemeToggle } from '../common/ThemeToggle';
+import { NotificationBell } from '../common/NotificationBell';
 import { ConfirmationModal, Tooltip } from '../common/Modal';
 import { formatCurrency } from '../../lib/utils';
 import {
@@ -252,7 +253,7 @@ export const DashboardLayout: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col md:flex-row">
+    <div className="h-screen overflow-hidden bg-slate-100 dark:bg-slate-950 flex flex-col md:flex-row">
 
       {/* ── MOBILE OVERLAY BACKDROP ────────────────────────────────────────── */}
       {mobileNavOpen && (
@@ -271,7 +272,7 @@ export const DashboardLayout: React.FC = () => {
           flex flex-col justify-between border-r border-slate-200 dark:border-slate-800
           transform transition-transform duration-300 ease-in-out
           ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}
-          md:relative md:translate-x-0 md:flex md:flex-shrink-0
+          md:sticky md:top-0 md:h-screen md:translate-x-0 md:flex md:flex-shrink-0
         `}
         aria-label="Sidebar navigation"
       >
@@ -315,6 +316,8 @@ export const DashboardLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            <NotificationBell />
+
             {/* Theme Toggle in Dashboard Navbar */}
             <Tooltip content="Switch between dark and light themes">
               <ThemeToggle />

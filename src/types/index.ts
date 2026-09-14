@@ -76,11 +76,13 @@ export interface NegotiationDocument {
 export interface AgreementSignature {
   userId: string;
   fullName: string;
+  email: string;
   typedSignature: string;
   title: string;
   businessName: string;
   signedAt: string;
   ipAddress?: string;
+  signatureId: string;
 }
 
 export interface Agreement {

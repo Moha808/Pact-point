@@ -8,19 +8,32 @@ export default {
   theme: {
     extend: {
       colors: {
-        navy: {
-          950: '#070c18',
-          900: '#0f172a',
-          800: '#1e293b',
-          700: '#334155',
-          600: '#475569',
-        },
         slate: {
-          850: '#151e2e',
+          50: '#f6f8fb',
+          100: '#eef1f6',
+          200: '#dce2eb',
+          300: '#c2cbd7',
+          400: '#9daabf',
+          500: '#7c8ca3',
+          600: '#617188',
+          700: '#4f5c71',
+          800: '#424d5e',
+          900: '#1c222c',  // deep professional navy-gray
+          950: '#0e1218',  // almost black for dark mode
         },
         teal: {
-          650: '#0c8277',
-        }
+          50: '#f2f8fc',
+          100: '#e1f0f7',
+          200: '#c9e2ef',
+          300: '#a3cce3',
+          400: '#77abd2',
+          500: '#548bbd',
+          600: '#416e9c', // Primary corporate blue replacing teal
+          700: '#35587f',
+          800: '#2e4968',
+          900: '#283e56',
+          950: '#1a2838',
+        },
       },
       fontFamily: {
         sans: ['"Plus Jakarta Sans"', 'system-ui', '-apple-system', 'sans-serif'],

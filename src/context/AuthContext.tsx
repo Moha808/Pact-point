@@ -88,7 +88,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 2. Realtime listener for all registered users (for counterparties and admin table)
   useEffect(() => {
-    if (!db) return;
+    if (!db || !currentUser) return;
 
     try {
       const usersQuery = query(collection(db, 'users'));
@@ -110,7 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (e) {
       console.warn('Could not establish real users listener:', e);
     }
-  }, []);
+  }, [currentUser]);
 
   const loginWithEmail = async (email: string, pass: string) => {
     if (!auth) throw new Error('Firebase Auth is not initialized');

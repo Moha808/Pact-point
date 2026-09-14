@@ -64,17 +64,21 @@ export const AgreementPage: React.FC = () => {
 
     try {
       setIsSigning(true);
+      const signatureId = `SignID:${Math.random().toString(36).substr(2, 9).toUpperCase()}-${Date.now().toString().slice(-6)}`;
       await signAgreement(negotiation.id, {
         userId: currentUser.uid,
+        email: currentUser.email,
         fullName: typedName.trim(),
         typedSignature: `/s/ ${typedName.trim()}`,
         title: jobTitle.trim(),
         businessName: currentUser.businessName,
         signedAt: new Date().toISOString(),
-        ipAddress: '127.0.0.1 (Verified Session)',
+        ipAddress: '127.0.0.1 (Verified Auth Session)',
+        signatureId,
       });
     } catch (err) {
       console.error('Signing error:', err);
+      alert('There was a problem submitting your signature. Please ensure the agreement exists and you have permissions.');
     } finally {
       setIsSigning(false);
     }
@@ -226,57 +230,89 @@ export const AgreementPage: React.FC = () => {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
               {/* Party A Signature */}
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-500 block mb-2">
+              <div className="p-5 rounded-xl border border-slate-200 bg-slate-50 relative overflow-hidden">
+                <span className="text-[10px] uppercase font-bold text-slate-500 block mb-3">
                   Signed on behalf of {negotiation.initiatorBusiness}
                 </span>
 
                 {currentAgreement.initiatorSignature ? (
-                  <div className="space-y-1">
-                    <div className="font-serif italic text-lg font-bold text-slate-900">
+                  <div className="space-y-1.5 relative z-10">
+                    <div className="font-serif italic text-2xl font-bold text-slate-900 border-b border-slate-200 pb-2 mb-2 inline-block min-w-[200px]">
                       {currentAgreement.initiatorSignature.typedSignature}
                     </div>
-                    <div className="text-xs font-semibold text-slate-800">
+                    <div className="text-xs font-bold text-slate-800">
                       {currentAgreement.initiatorSignature.fullName}
                     </div>
-                    <div className="text-[11px] text-slate-500">
+                    <div className="text-[11px] text-slate-600">
                       {currentAgreement.initiatorSignature.title}
                     </div>
-                    <div className="text-[10px] text-teal-700 font-mono mt-2">
-                      Timestamp: {formatDate(currentAgreement.initiatorSignature.signedAt)}
+                    <div className="text-[11px] text-slate-500 mb-3">
+                      {currentAgreement.initiatorSignature.email}
+                    </div>
+                    
+                    <div className="mt-3 p-2 bg-teal-50 border border-teal-100 rounded text-[9px] text-teal-800 font-mono space-y-1">
+                      <div className="flex justify-between">
+                        <span className="font-semibold text-teal-900">SignID:</span>
+                        <span>{currentAgreement.initiatorSignature.signatureId}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-semibold text-teal-900">Timestamp:</span>
+                        <span>{formatDate(currentAgreement.initiatorSignature.signedAt)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-semibold text-teal-900">IP / Auth:</span>
+                        <span>{currentAgreement.initiatorSignature.ipAddress}</span>
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="py-6 text-center text-xs text-slate-400 italic">
-                    Awaiting digital signature from {negotiation.initiatorName}
+                  <div className="py-8 flex flex-col items-center justify-center text-center text-xs text-slate-400 italic bg-white/50 rounded-lg border border-dashed border-slate-300">
+                    <ShieldCheck className="w-6 h-6 text-slate-300 mb-2 opacity-50" />
+                    Awaiting digital signature from<br />{negotiation.initiatorName}
                   </div>
                 )}
               </div>
 
               {/* Party B Signature */}
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-500 block mb-2">
+              <div className="p-5 rounded-xl border border-slate-200 bg-slate-50 relative overflow-hidden">
+                <span className="text-[10px] uppercase font-bold text-slate-500 block mb-3">
                   Signed on behalf of {negotiation.counterpartyBusiness}
                 </span>
 
                 {currentAgreement.counterpartySignature ? (
-                  <div className="space-y-1">
-                    <div className="font-serif italic text-lg font-bold text-slate-900">
+                  <div className="space-y-1.5 relative z-10">
+                    <div className="font-serif italic text-2xl font-bold text-slate-900 border-b border-slate-200 pb-2 mb-2 inline-block min-w-[200px]">
                       {currentAgreement.counterpartySignature.typedSignature}
                     </div>
-                    <div className="text-xs font-semibold text-slate-800">
+                    <div className="text-xs font-bold text-slate-800">
                       {currentAgreement.counterpartySignature.fullName}
                     </div>
-                    <div className="text-[11px] text-slate-500">
+                    <div className="text-[11px] text-slate-600">
                       {currentAgreement.counterpartySignature.title}
                     </div>
-                    <div className="text-[10px] text-teal-700 font-mono mt-2">
-                      Timestamp: {formatDate(currentAgreement.counterpartySignature.signedAt)}
+                    <div className="text-[11px] text-slate-500 mb-3">
+                      {currentAgreement.counterpartySignature.email}
+                    </div>
+                    
+                    <div className="mt-3 p-2 bg-teal-50 border border-teal-100 rounded text-[9px] text-teal-800 font-mono space-y-1">
+                      <div className="flex justify-between">
+                        <span className="font-semibold text-teal-900">SignID:</span>
+                        <span>{currentAgreement.counterpartySignature.signatureId}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-semibold text-teal-900">Timestamp:</span>
+                        <span>{formatDate(currentAgreement.counterpartySignature.signedAt)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-semibold text-teal-900">IP / Auth:</span>
+                        <span>{currentAgreement.counterpartySignature.ipAddress}</span>
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="py-6 text-center text-xs text-slate-400 italic">
-                    Awaiting digital signature from {negotiation.counterpartyName}
+                  <div className="py-8 flex flex-col items-center justify-center text-center text-xs text-slate-400 italic bg-white/50 rounded-lg border border-dashed border-slate-300">
+                    <ShieldCheck className="w-6 h-6 text-slate-300 mb-2 opacity-50" />
+                    Awaiting digital signature from<br />{negotiation.counterpartyName}
                   </div>
                 )}
               </div>

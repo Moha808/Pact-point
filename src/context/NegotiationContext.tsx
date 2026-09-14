@@ -20,6 +20,7 @@ import {
   orderBy,
   addDoc,
   getDocs,
+  getDoc,
   where,
 } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
@@ -94,40 +95,41 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
 
     try {
-      const q = query(
-        collection(db, 'negotiations'),
-        where('participants', 'array-contains', currentUser.uid),
-        orderBy('updatedAt', 'desc')
-      );
+      // Admins need to see all rooms. The rules allow them to query the entire collection.
+      const q = currentUser.role === 'admin'
+        ? query(collection(db, 'negotiations'))
+        : query(collection(db, 'negotiations'), where('participants', 'array-contains', currentUser.uid));
 
       const unsubscribe = onSnapshot(
         q,
         (snapshot) => {
           const list: Negotiation[] = [];
+          const now = Date.now();
+          const EXPIRATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+          
           snapshot.forEach((d) => {
-            list.push({ id: d.id, ...d.data() } as Negotiation);
+            const data = d.data() as Omit<Negotiation, 'id'>;
+            let status = data.status;
+            
+            // Lazy expiration check
+            if ((status === 'open' || status === 'countered') && data.updatedAt) {
+              if (now - new Date(data.updatedAt).getTime() > EXPIRATION_MS) {
+                status = 'closed';
+                // Fire and forget status update to DB
+                updateDoc(doc(db, 'negotiations', d.id), { status: 'closed' }).catch(() => {});
+              }
+            }
+            
+            list.push({ id: d.id, ...data, status } as Negotiation);
           });
+          // Sort in memory to avoid requiring a composite index
+          list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
           setNegotiations(list);
           setLoading(false);
         },
         (error) => {
           console.warn('Firestore negotiations listener notice:', error);
-          // If the filtered query fails (e.g., missing index), fall back to unfiltered
-          try {
-            const fallbackQ = query(collection(db, 'negotiations'), orderBy('updatedAt', 'desc'));
-            onSnapshot(
-              fallbackQ,
-              (snap) => {
-                const list: Negotiation[] = [];
-                snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Negotiation));
-                setNegotiations(list);
-                setLoading(false);
-              },
-              () => setLoading(false)
-            );
-          } catch {
-            setLoading(false);
-          }
+          setLoading(false);
         }
       );
 
@@ -318,12 +320,13 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
 
     // Mark previous pending offers as countered in Firestore
-    for (const off of currentOffers) {
-      if (off.status === 'pending') {
-        await updateDoc(doc(db, 'negotiations', negotiationId, 'offers', off.id), {
-          status: 'countered',
-        });
-      }
+    const pendingSnap = await getDocs(
+      query(collection(db, 'negotiations', negotiationId, 'offers'), where('status', '==', 'pending'))
+    );
+    for (const offDoc of pendingSnap.docs) {
+      await updateDoc(doc(db, 'negotiations', negotiationId, 'offers', offDoc.id), {
+        status: 'countered',
+      });
     }
 
     await setDoc(doc(db, 'negotiations', negotiationId, 'offers', newOfferId), newOffer);
@@ -356,9 +359,20 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const neg = getNegotiation(negotiationId);
     if (!neg) return;
 
-    const currentOffers = getOffers(negotiationId);
-    const acceptedOffer = currentOffers.find((o) => o.id === offerId);
-    if (!acceptedOffer) return;
+    let acceptedOffer = getOffers(negotiationId).find((o) => o.id === offerId);
+    
+    // If context state is stale, fetch directly
+    if (!acceptedOffer) {
+      const snap = await getDoc(doc(db, 'negotiations', negotiationId, 'offers', offerId));
+      if (snap.exists()) {
+        acceptedOffer = { id: snap.id, ...snap.data() } as Offer;
+      }
+    }
+
+    if (!acceptedOffer) {
+      console.error("Could not locate the accepted offer details");
+      return;
+    }
 
     const agreementId = 'agr-' + Date.now();
     const newAgreement: Agreement = {
@@ -483,8 +497,19 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const signAgreement = async (negotiationId: string, signature: AgreementSignature) => {
     if (!db) return;
-    const existing = agreementsMap[negotiationId];
-    if (!existing) return;
+    let existing = agreementsMap[negotiationId];
+    
+    // If not in local context, fetch directly
+    if (!existing) {
+      const snap = await getDoc(doc(db, 'agreements', negotiationId));
+      if (snap.exists()) {
+        existing = snap.data() as Agreement;
+      }
+    }
+    
+    if (!existing) {
+      throw new Error("Could not locate the agreement record to sign.");
+    }
 
     const neg = getNegotiation(negotiationId);
     const isInitiator = neg ? signature.userId === neg.initiatorId : true;
