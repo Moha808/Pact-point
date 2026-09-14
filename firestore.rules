@@ -21,7 +21,8 @@ service cloud.firestore {
       return isAuthenticated() && (
         request.auth.uid == negotiationData.initiatorId || 
         request.auth.uid == negotiationData.counterpartyId ||
-        request.auth.uid == negotiationData.businessId
+        request.auth.uid == negotiationData.businessId ||
+        (negotiationData.participants != null && request.auth.uid in negotiationData.participants)
       );
     }
 
@@ -33,6 +34,13 @@ service cloud.firestore {
       allow create: if isAuthenticated() && request.auth.uid == userId && request.resource.data.role != 'admin';
       allow update: if (isUser(userId) && request.resource.data.role == resource.data.role) || isAdmin();
       allow delete: if isAdmin();
+    }
+
+    // Notifications collection rules
+    match /notifications/{userId}/{document=**} {
+      allow read, update, delete: if isAuthenticated() && request.auth.uid == userId;
+      // Allow any authenticated user to create a notification for another user
+      allow create: if isAuthenticated();
     }
 
     // Negotiations collection rules

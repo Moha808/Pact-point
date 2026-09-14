@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useNegotiation } from '../../context/NegotiationContext';
 import { useAuth } from '../../context/AuthContext';
@@ -7,7 +7,7 @@ import { DecisionSupportPanel } from '../../components/decisionSupport/DecisionS
 import { formatCurrency, formatDate, formatRelativeTime, sanitizeText } from '../../lib/utils';
 import { Offer, ChatMessage, NegotiationDocument, Negotiation } from '../../types';
 import { db } from '../../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import {
   Briefcase,
   Layers,
@@ -46,9 +46,6 @@ export const NegotiationRoomPage: React.FC = () => {
   const { currentUser, userRole } = useAuth();
 
   const negotiationFromContext = getNegotiation(roomId || '');
-  const offers = getOffers(roomId || '');
-  const messages = getMessages(roomId || '');
-  const documents = getDocuments(roomId || '');
 
   // Direct-fetch fallback: if the room isn't in the onSnapshot state yet (e.g. race condition
   // right after creation), fetch it directly from Firestore by document ID.
@@ -81,6 +78,64 @@ export const NegotiationRoomPage: React.FC = () => {
   const negotiation = negotiationFromContext ?? (directFetch !== 'loading' ? directFetch : null);
   const isResolving = !negotiationFromContext && directFetch === 'loading';
 
+  // ── Per-room dedicated Firestore listeners ──────────────────────────────────
+  // These bypass the context's bulk listener which can lag on freshly created rooms.
+  // They feed local state that takes precedence over context-derived values.
+  const [liveMessages, setLiveMessages] = useState<ChatMessage[] | null>(null);
+  const [liveOffers, setLiveOffers] = useState<Offer[] | null>(null);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!db || !roomId) return;
+
+    // Subscribe to messages sub-collection directly for this room
+    const msgsQuery = query(
+      collection(db, 'negotiations', roomId, 'messages'),
+      orderBy('createdAt', 'asc')
+    );
+    const unsubMsgs = onSnapshot(
+      msgsQuery,
+      (snap) => {
+        const msgs: ChatMessage[] = [];
+        snap.forEach((d) => msgs.push({ id: d.id, ...d.data() } as ChatMessage));
+        setLiveMessages(msgs);
+      },
+      (err) => console.warn('Room messages listener error:', err)
+    );
+
+    // Subscribe to offers sub-collection directly for this room
+    const offersQuery = query(
+      collection(db, 'negotiations', roomId, 'offers'),
+      orderBy('createdAt', 'asc')
+    );
+    const unsubOffers = onSnapshot(
+      offersQuery,
+      (snap) => {
+        const offers: Offer[] = [];
+        snap.forEach((d) => offers.push({ id: d.id, ...d.data() } as Offer));
+        setLiveOffers(offers);
+      },
+      (err) => console.warn('Room offers listener error:', err)
+    );
+
+    return () => {
+      unsubMsgs();
+      unsubOffers();
+    };
+  }, [roomId]);
+
+  // Auto-scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    if (chatBottomRef.current) {
+      chatBottomRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [liveMessages]);
+
+  // Use live per-room data when available; fall back to context data
+  const offers = liveOffers ?? getOffers(roomId || '');
+  const messages = liveMessages ?? getMessages(roomId || '');
+  const documents = getDocuments(roomId || '');
+
   // Active sub-view tab for the right rail: 'chat' | 'documents'
   const [activeRailTab, setActiveRailTab] = useState<'chat' | 'documents'>('chat');
 
@@ -95,6 +150,7 @@ export const NegotiationRoomPage: React.FC = () => {
 
   // Chat message input
   const [chatInput, setChatInput] = useState('');
+  const [isSendingMsg, setIsSendingMsg] = useState(false);
 
   // Confirmation modal states
   const [acceptConfirmOfferId, setAcceptConfirmOfferId] = useState<string | null>(null);
@@ -122,7 +178,7 @@ export const NegotiationRoomPage: React.FC = () => {
     );
   }
 
-  // Sorted offers (newest first for quick inspection, or oldest first for narrative)
+  // Sorted offers (oldest first for narrative timeline)
   const chronologicalOffers = [...offers].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
@@ -177,9 +233,16 @@ export const NegotiationRoomPage: React.FC = () => {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
-    await sendMessage(negotiation.id, chatInput);
-    setChatInput('');
+    if (!chatInput.trim() || isSendingMsg) return;
+    try {
+      setIsSendingMsg(true);
+      await sendMessage(negotiation.id, chatInput);
+      setChatInput('');
+    } catch (err) {
+      console.error('Failed to send message:', err);
+    } finally {
+      setIsSendingMsg(false);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -193,9 +256,10 @@ export const NegotiationRoomPage: React.FC = () => {
     <div className="flex-1 flex flex-col min-w-0 bg-slate-100 dark:bg-slate-950">
       {/* Top Header */}
       <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-4">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto flex flex-col gap-4">
+          {/* Breadcrumb & Title */}
           <div>
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
               <Link
                 to="/dashboard"
                 className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
@@ -203,15 +267,15 @@ export const NegotiationRoomPage: React.FC = () => {
                 <ArrowLeft className="w-3.5 h-3.5" /> Back to Rooms
               </Link>
               <span className="text-slate-300 dark:text-slate-600">/</span>
-              <span className="text-xs font-mono text-slate-500 dark:text-slate-400">{negotiation.id}</span>
+              <span className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate max-w-[120px] sm:max-w-none">{negotiation.id}</span>
               <StatusBadge status={negotiation.status} />
             </div>
 
-            <h1 className="text-xl font-extrabold text-slate-950 dark:text-white tracking-tight">
+            <h1 className="text-lg sm:text-xl font-extrabold text-slate-950 dark:text-white tracking-tight">
               {negotiation.subject}
             </h1>
 
-            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500 dark:text-slate-400 mt-1">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-1">
               <span className="flex items-center gap-1.5 font-medium text-slate-800 dark:text-slate-200">
                 <Building2 className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
                 {negotiation.initiatorBusiness}
@@ -219,15 +283,15 @@ export const NegotiationRoomPage: React.FC = () => {
                 {negotiation.counterpartyBusiness}
               </span>
               <span>•</span>
-              <span>Round {negotiation.totalRounds} of negotiations</span>
+              <span>Round {negotiation.totalRounds}</span>
               <span>•</span>
-              <span className="text-slate-400 dark:text-slate-500">Target Budget: {formatCurrency(negotiation.targetBudget || 0, negotiation.currency)}</span>
+              <span className="text-slate-400 dark:text-slate-500">Target: {formatCurrency(negotiation.targetBudget || 0, negotiation.currency)}</span>
             </div>
           </div>
 
-          {/* Current Position & Primary Actions */}
-          <div className="flex items-center gap-3 self-start md:self-auto">
-            <div className="text-right pr-3 border-r border-slate-200 dark:border-slate-700 hidden sm:block">
+          {/* Current Position & Primary Actions — wraps on mobile */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="pr-3 border-r border-slate-200 dark:border-slate-700">
               <span className="text-[11px] uppercase font-bold text-slate-400 dark:text-slate-500 block">
                 Current Position
               </span>
@@ -247,26 +311,26 @@ export const NegotiationRoomPage: React.FC = () => {
               </Link>
             )}
 
-            {/* If pending counteroffer and current user's turn */}
+            {/* If pending counteroffer and current user's turn — wraps cleanly on mobile */}
             {canAcceptOrCounter && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => setAcceptConfirmOfferId(latestOffer.id)}
-                  className="px-3.5 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-sm transition-colors"
                 >
                   <CheckCircle className="w-3.5 h-3.5" />
-                  Accept Offer ({formatCurrency(latestOffer.amount, latestOffer.currency)})
+                  <span className="hidden sm:inline">Accept</span> ({formatCurrency(latestOffer.amount, latestOffer.currency)})
                 </button>
                 <button
                   onClick={handleOpenCounterForm}
-                  className="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition-colors"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-teal-400" />
-                  Submit Counteroffer
+                  Counter
                 </button>
                 <button
                   onClick={handleRejectLatest}
-                  className="p-2 rounded-lg border border-slate-300 hover:bg-rose-50 hover:border-rose-200 text-slate-600 hover:text-rose-600 transition-colors"
+                  className="inline-flex items-center gap-1.5 p-2 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:border-rose-200 dark:hover:border-rose-800 text-slate-600 dark:text-slate-300 hover:text-rose-600 transition-colors"
                   title="Decline Offer"
                 >
                   <XCircle className="w-4 h-4" />
@@ -398,6 +462,11 @@ export const NegotiationRoomPage: React.FC = () => {
             </div>
 
             <div className="p-5 space-y-6">
+              {chronologicalOffers.length === 0 && (
+                <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs">
+                  No offers yet — offers will appear here in real-time.
+                </div>
+              )}
               {chronologicalOffers.map((offer, index) => {
                 const isMyOffer = offer.fromUserId === currentUser?.uid;
                 const isLatest = index === chronologicalOffers.length - 1;
@@ -434,7 +503,7 @@ export const NegotiationRoomPage: React.FC = () => {
                       {/* Offer Header */}
                       <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200/70 dark:border-slate-700/70">
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs font-bold text-slate-900 dark:text-white">
                               {offer.fromUserName}
                             </span>
@@ -522,7 +591,7 @@ export const NegotiationRoomPage: React.FC = () => {
                 }`}
               >
                 <MessageSquare className="w-4 h-4 text-teal-600" />
-                Room Live Chat ({messages.length})
+                Live Chat ({messages.length})
               </button>
               <button
                 onClick={() => setActiveRailTab('documents')}
@@ -533,15 +602,20 @@ export const NegotiationRoomPage: React.FC = () => {
                 }`}
               >
                 <Paperclip className="w-4 h-4 text-teal-600" />
-                Document Vault ({documents.length})
+                Documents ({documents.length})
               </button>
             </div>
 
             {/* TAB CONTENT: CHAT */}
             {activeRailTab === 'chat' && (
-              <div className="flex flex-col h-[520px]">
+              <div className="flex flex-col h-[480px] sm:h-[520px]">
                 {/* Messages Transcript */}
                 <div className="flex-1 p-4 overflow-y-auto space-y-3.5 bg-slate-50/40 dark:bg-slate-950/30">
+                  {messages.length === 0 && (
+                    <div className="h-full flex items-center justify-center text-xs text-slate-400 dark:text-slate-500 text-center px-4">
+                      No messages yet. Be the first to send a message in this dealroom.
+                    </div>
+                  )}
                   {messages.map((msg) => {
                     const isMe = msg.senderId === currentUser?.uid;
 
@@ -576,6 +650,8 @@ export const NegotiationRoomPage: React.FC = () => {
                       </div>
                     );
                   })}
+                  {/* Scroll anchor */}
+                  <div ref={chatBottomRef} />
                 </div>
 
                 {/* Chat Input */}
@@ -588,11 +664,13 @@ export const NegotiationRoomPage: React.FC = () => {
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     placeholder="Type message to room participants..."
-                    className="flex-1 px-3 py-2 text-xs border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg focus:ring-2 focus:ring-teal-600 focus:outline-none"
+                    className="flex-1 px-3 py-2 text-xs border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg focus:ring-2 focus:ring-teal-600 focus:outline-none min-w-0"
+                    disabled={isSendingMsg}
                   />
                   <button
                     type="submit"
-                    className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white transition-colors"
+                    disabled={isSendingMsg || !chatInput.trim()}
+                    className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                   >
                     <Send className="w-4 h-4 text-teal-400" />
                   </button>
@@ -651,7 +729,7 @@ export const NegotiationRoomPage: React.FC = () => {
                         <a
                           href={doc.fileData || doc.downloadUrl || `data:text/plain;charset=utf-8,Verified contract record for ${encodeURIComponent(doc.fileName)}`}
                           download={doc.fileName}
-                          className="p-1.5 rounded text-slate-400 hover:text-slate-800 hover:bg-slate-200 transition-colors"
+                          className="p-1.5 rounded text-slate-400 hover:text-slate-800 hover:bg-slate-200 transition-colors flex-shrink-0"
                           title="Download Document"
                         >
                           <Download className="w-4 h-4" />
@@ -669,16 +747,16 @@ export const NegotiationRoomPage: React.FC = () => {
       {/* Confirmation Modal for Accepting Offer */}
       {acceptConfirmOfferId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
-            <div className="w-10 h-10 rounded-full bg-teal-100 text-teal-800 flex items-center justify-center mb-3 font-bold">
+          <div className="bg-white dark:bg-slate-900 rounded-xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800">
+            <div className="w-10 h-10 rounded-full bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-300 flex items-center justify-center mb-3 font-bold">
               <CheckCircle className="w-5 h-5" />
             </div>
-            <h3 className="text-base font-bold text-slate-950">
+            <h3 className="text-base font-bold text-slate-950 dark:text-white">
               Confirm Bilateral Term Acceptance
             </h3>
-            <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5 leading-relaxed">
               Accepting this offer of{' '}
-              <strong className="text-slate-900 font-bold">
+              <strong className="text-slate-900 dark:text-white font-bold">
                 {formatCurrency(latestOffer?.amount || 0, latestOffer?.currency)}
               </strong>{' '}
               will freeze further counteroffers and generate the formal Agreement Summary for digital signature.
@@ -687,7 +765,7 @@ export const NegotiationRoomPage: React.FC = () => {
             <div className="mt-5 flex items-center justify-end gap-2.5">
               <button
                 onClick={() => setAcceptConfirmOfferId(null)}
-                className="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                className="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
               >
                 Cancel
               </button>
@@ -695,7 +773,7 @@ export const NegotiationRoomPage: React.FC = () => {
                 onClick={handleAcceptLatest}
                 className="px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-sm"
               >
-                Confirm & Proceed to Execution
+                Confirm &amp; Proceed to Execution
               </button>
             </div>
           </div>

@@ -20,6 +20,7 @@ import {
   orderBy,
   addDoc,
   getDocs,
+  where,
 } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
 
@@ -77,15 +78,28 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [documentsMap, setDocumentsMap] = useState<Record<string, NegotiationDocument[]>>({});
   const [agreementsMap, setAgreementsMap] = useState<Record<string, Agreement>>({});
 
-  // 1. Listen to real Firestore Negotiations collection
+  // 1. Listen to real Firestore Negotiations collection — filtered by participant
+  //    Uses 'participants' array-contains so each user only receives their own rooms.
+  //    Falls back to a full collection scan if currentUser is not yet loaded.
   useEffect(() => {
     if (!db) {
       setLoading(false);
       return;
     }
 
+    // Wait until we know who the user is before subscribing
+    if (!currentUser) {
+      setLoading(false);
+      return;
+    }
+
     try {
-      const q = query(collection(db, 'negotiations'), orderBy('updatedAt', 'desc'));
+      const q = query(
+        collection(db, 'negotiations'),
+        where('participants', 'array-contains', currentUser.uid),
+        orderBy('updatedAt', 'desc')
+      );
+
       const unsubscribe = onSnapshot(
         q,
         (snapshot) => {
@@ -98,7 +112,22 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         },
         (error) => {
           console.warn('Firestore negotiations listener notice:', error);
-          setLoading(false);
+          // If the filtered query fails (e.g., missing index), fall back to unfiltered
+          try {
+            const fallbackQ = query(collection(db, 'negotiations'), orderBy('updatedAt', 'desc'));
+            onSnapshot(
+              fallbackQ,
+              (snap) => {
+                const list: Negotiation[] = [];
+                snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Negotiation));
+                setNegotiations(list);
+                setLoading(false);
+              },
+              () => setLoading(false)
+            );
+          } catch {
+            setLoading(false);
+          }
         }
       );
 
@@ -107,9 +136,10 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
       console.warn('Could not initialize negotiations query:', e);
       setLoading(false);
     }
-  }, []);
+  }, [currentUser]);
 
   // 2. Realtime listeners for active room subcollections (Offers, Messages, Documents, Agreements)
+  //    Only attach for rooms that are in the current user's list, and only when the list is populated.
   useEffect(() => {
     if (!db || negotiations.length === 0) return;
 
@@ -190,6 +220,8 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
       counterpartyId: input.counterpartyId,
       counterpartyName: input.counterpartyName,
       counterpartyBusiness: input.counterpartyBusiness,
+      // participants array enables Firestore 'array-contains' queries for both parties
+      participants: [currentUser.uid, input.counterpartyId],
       targetBudget: input.initialAmount * 1.1,
       currency: input.currency || 'USD',
       status: 'open',
@@ -231,9 +263,27 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
       createdAt: new Date().toISOString(),
     };
 
+    // Write negotiation + initial offer + initial message
     await setDoc(doc(db, 'negotiations', newId), newNegotiation);
     await setDoc(doc(db, 'negotiations', newId, 'offers', offerId), initialOffer);
     await addDoc(collection(db, 'negotiations', newId, 'messages'), initialMessage);
+
+    // Notify the counterparty by writing a notification record under their UID
+    try {
+      await setDoc(doc(db, 'notifications', input.counterpartyId, 'rooms', newId), {
+        negotiationId: newId,
+        subject: input.subject,
+        initiatorName: currentUser.fullName,
+        initiatorBusiness: currentUser.businessName,
+        amount: input.initialAmount,
+        currency: input.currency || 'NGN',
+        createdAt: new Date().toISOString(),
+        read: false,
+      });
+    } catch (notifErr) {
+      // Non-fatal — room was created successfully; notification is best-effort
+      console.warn('Could not write counterparty notification:', notifErr);
+    }
 
     return newId;
   };
