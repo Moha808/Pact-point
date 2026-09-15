@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useNegotiation } from '../../context/NegotiationContext';
 import { useAuth } from '../../context/AuthContext';
 import { StatusBadge } from '../../components/common/Badge';
@@ -24,7 +24,16 @@ export const UserDashboard: React.FC = () => {
   const { negotiations } = useNegotiation();
   const { currentUser } = useAuth();
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'agreements' | 'closed'>('all');
+  const [searchParams] = useSearchParams();
+  const initialFilter = (searchParams.get('filter') as 'all' | 'active' | 'agreements' | 'closed') || 'all';
+  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'agreements' | 'closed'>(initialFilter);
+
+  useEffect(() => {
+    const f = searchParams.get('filter');
+    if (f) {
+      setFilterStatus(f as 'all' | 'active' | 'agreements' | 'closed');
+    }
+  }, [searchParams]);
 
   const isOwner = currentUser?.role === 'owner';
   const isNegotiator = currentUser?.role === 'negotiator';
@@ -97,7 +106,7 @@ export const UserDashboard: React.FC = () => {
              
              <div className="mt-8 relative z-10">
                 <div className="text-slate-400 text-sm font-medium mb-1">Total Contracted Capital Exposure (₦)</div>
-                <div className="text-4xl sm:text-5xl font-light tracking-tight">
+                <div className="text-2xl sm:text-4xl lg:text-5xl font-light tracking-tight break-all">
                    {formatCurrency(totalPipelineValue, 'NGN').replace('₦', '')}
                 </div>
              </div>

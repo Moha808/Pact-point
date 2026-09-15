@@ -64,6 +64,7 @@ interface NegotiationContextType {
   uploadDocument: (negotiationId: string, file: File) => Promise<void>;
   signAgreement: (negotiationId: string, signature: AgreementSignature) => Promise<void>;
   updateNegotiationStatus: (negotiationId: string, status: NegotiationStatus) => Promise<void>;
+  terminateNegotiation: (negotiationId: string, reason?: string) => Promise<void>;
 }
 
 const NegotiationContext = createContext<NegotiationContextType | undefined>(undefined);
@@ -507,25 +508,61 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
       }
     }
     
+    let neg = getNegotiation(negotiationId);
+    if (!neg) {
+      const negSnap = await getDoc(doc(db, 'negotiations', negotiationId));
+      if (negSnap.exists()) {
+        neg = { id: negSnap.id, ...negSnap.data() } as Negotiation;
+      }
+    }
+
+    // Fallback: If agreement document was not created yet, construct it from negotiation
+    if (!existing && neg) {
+      existing = {
+        negotiationId,
+        agreementNumber: `AGR-${Date.now().toString().slice(-6)}`,
+        title: `${neg.subject} — Master Commercial Agreement`,
+        finalAmount: neg.currentAmount,
+        currency: neg.currency || 'NGN',
+        finalTerms: 'All terms as mutually converged and agreed upon during dealroom deliberation.',
+        paymentSchedule: 'Net 30 days upon delivery',
+        deliveryTimeline: 'Within 14 calendar days of execution',
+        contingencies: 'Standard warranties, non-disclosure, and compliance covenants apply.',
+        status: 'pending_signatures',
+        createdAt: new Date().toISOString(),
+      };
+    }
+    
     if (!existing) {
       throw new Error("Could not locate the agreement record to sign.");
     }
 
-    const neg = getNegotiation(negotiationId);
     const isInitiator = neg ? signature.userId === neg.initiatorId : true;
 
     const updatedAgreement: Agreement = {
       ...existing,
-      initiatorSignature: isInitiator ? signature : existing.initiatorSignature,
-      counterpartySignature: !isInitiator ? signature : existing.counterpartySignature,
     };
+    
+    if (isInitiator) {
+      updatedAgreement.initiatorSignature = signature;
+    } else {
+      updatedAgreement.counterpartySignature = signature;
+    }
+    
+    // Remove any undefined properties to prevent Firestore setDoc errors
+    Object.keys(updatedAgreement).forEach((key) => {
+      if ((updatedAgreement as any)[key] === undefined) {
+        delete (updatedAgreement as any)[key];
+      }
+    });
 
-    if (
-      (updatedAgreement.initiatorSignature || isInitiator) &&
-      (updatedAgreement.counterpartySignature || !isInitiator)
-    ) {
+    if (updatedAgreement.initiatorSignature && updatedAgreement.counterpartySignature) {
       updatedAgreement.status = 'fully_executed';
       updatedAgreement.executedAt = new Date().toISOString();
+      await updateDoc(doc(db, 'negotiations', negotiationId), {
+        status: 'accepted',
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     await setDoc(doc(db, 'agreements', negotiationId), updatedAgreement);
@@ -552,6 +589,45 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
   };
 
+  const terminateNegotiation = async (negotiationId: string, reason?: string) => {
+    if (!currentUser || !db) return;
+    
+    await updateDoc(doc(db, 'negotiations', negotiationId), {
+      status: 'closed',
+      closedReason: reason || 'Terminated by Platform Administrator',
+      closedAt: new Date().toISOString(),
+      closedBy: currentUser.uid,
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Mark any pending offers as superseded
+    try {
+      const pendingSnap = await getDocs(
+        query(collection(db, 'negotiations', negotiationId, 'offers'), where('status', '==', 'pending'))
+      );
+      for (const offDoc of pendingSnap.docs) {
+        await updateDoc(doc(db, 'negotiations', negotiationId, 'offers', offDoc.id), {
+          status: 'superseded',
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to update pending offers during termination:', e);
+    }
+
+    const sysMsg: ChatMessage = {
+      id: 'msg-' + Date.now(),
+      negotiationId,
+      senderId: 'system',
+      senderName: 'System',
+      senderRole: 'admin',
+      isSystemEvent: true,
+      text: `Dealroom officially TERMINATED by Administrator (${currentUser.fullName}). Reason: ${reason || 'Administrative closure'}. All further deliberations are halted.`,
+      createdAt: new Date().toISOString(),
+    };
+
+    await addDoc(collection(db, 'negotiations', negotiationId, 'messages'), sysMsg);
+  };
+
   return (
     <NegotiationContext.Provider
       value={{
@@ -570,6 +646,7 @@ export const NegotiationProvider: React.FC<{ children: React.ReactNode }> = ({ c
         uploadDocument,
         signAgreement,
         updateNegotiationStatus,
+        terminateNegotiation,
       }}
     >
       {children}

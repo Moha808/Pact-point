@@ -83,6 +83,8 @@ export interface AgreementSignature {
   signedAt: string;
   ipAddress?: string;
   signatureId: string;
+  signatureType?: 'typed' | 'drawn';
+  signatureImage?: string;
 }
 
 export interface Agreement {

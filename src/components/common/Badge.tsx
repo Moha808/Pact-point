@@ -82,3 +82,75 @@ export const RoleBadge: React.FC<{ role: UserRole; className?: string }> = ({ ro
     </span>
   );
 };
+
+export type ModalType = 'error' | 'success' | 'warning' | 'info';
+
+export interface FeedbackModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  message: string;
+  type?: ModalType;
+  confirmText?: string;
+}
+
+export const FeedbackModal: React.FC<FeedbackModalProps> = ({
+  isOpen,
+  onClose,
+  title,
+  message,
+  type = 'info',
+  confirmText = 'Understood',
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <div className={`p-2.5 rounded-xl shrink-0 ${
+              type === 'error' ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400' :
+              type === 'warning' ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400' :
+              type === 'success' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400' :
+              'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400'
+            }`}>
+              <span className="font-bold text-lg leading-none">
+                {type === 'error' ? '✕' : type === 'warning' ? '⚠' : type === 'success' ? '✓' : 'ℹ'}
+              </span>
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-950 dark:text-white">
+                {title}
+              </h3>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+
+        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed pl-1">
+          {message}
+        </p>
+
+        <div className="flex justify-end pt-2">
+          <button
+            onClick={onClose}
+            className={`px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-colors ${
+              type === 'error' ? 'bg-rose-600 hover:bg-rose-700 text-white' :
+              type === 'warning' ? 'bg-amber-600 hover:bg-amber-700 text-white' :
+              type === 'success' ? 'bg-teal-700 hover:bg-teal-800 text-white' :
+              'bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-800 dark:hover:bg-slate-700'
+            }`}
+          >
+            {confirmText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

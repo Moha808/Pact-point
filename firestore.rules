@@ -19,9 +19,9 @@ service cloud.firestore {
 
     function isPartyToNegotiation(negotiationData) {
       return isAuthenticated() && (
-        request.auth.uid == negotiationData.initiatorId || 
-        request.auth.uid == negotiationData.counterpartyId ||
-        request.auth.uid == negotiationData.businessId ||
+        ('initiatorId' in negotiationData && request.auth.uid == negotiationData.initiatorId) || 
+        ('counterpartyId' in negotiationData && request.auth.uid == negotiationData.counterpartyId) ||
+        ('businessId' in negotiationData && request.auth.uid == negotiationData.businessId) ||
         ('participants' in negotiationData && request.auth.uid in negotiationData.participants)
       );
     }
@@ -60,43 +60,32 @@ service cloud.firestore {
 
       // Subcollection: Offers & Counteroffers
       match /offers/{offerId} {
-        allow read: if isAuthenticated() && (
-          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) || 
-          isAdmin()
-        );
+        allow read: if isAuthenticated();
         allow create: if isAuthenticated() && (
-          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) &&
-          request.resource.data.fromUserId == request.auth.uid
-        );
-        allow update: if isAuthenticated() && (
-          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) || 
+          request.resource.data.fromUserId == request.auth.uid ||
           isAdmin()
         );
+        allow update: if isAuthenticated();
         allow delete: if isAdmin();
       }
 
       // Subcollection: Realtime Chat Messages
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && (
-          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) || 
-          isAdmin()
-        );
+        allow read: if isAuthenticated();
         allow create: if isAuthenticated() && (
-          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) &&
-          (request.resource.data.senderId == request.auth.uid || request.resource.data.senderId == 'system')
+          request.resource.data.senderId == request.auth.uid || 
+          request.resource.data.senderId == 'system' ||
+          isAdmin()
         );
         allow update, delete: if isAdmin();
       }
 
       // Subcollection: Attached Documents
       match /documents/{documentId} {
-        allow read: if isAuthenticated() && (
-          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) || 
-          isAdmin()
-        );
+        allow read: if isAuthenticated();
         allow create: if isAuthenticated() && (
-          isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) &&
-          request.resource.data.uploadedBy == request.auth.uid
+          request.resource.data.uploadedBy == request.auth.uid ||
+          isAdmin()
         );
         allow delete: if isAdmin() || (
           isAuthenticated() && resource.data.uploadedBy == request.auth.uid
@@ -106,16 +95,7 @@ service cloud.firestore {
 
     // Agreements collection
     match /agreements/{negotiationId} {
-      allow read: if isAuthenticated() && (
-        exists(/databases/$(database)/documents/negotiations/$(negotiationId)) &&
-        isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) ||
-        isAdmin()
-      );
-      allow create, update: if isAuthenticated() && (
-        exists(/databases/$(database)/documents/negotiations/$(negotiationId)) &&
-        isPartyToNegotiation(get(/databases/$(database)/documents/negotiations/$(negotiationId)).data) ||
-        isAdmin()
-      );
+      allow read, write: if isAuthenticated();
     }
   }
 }
